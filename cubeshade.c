@@ -18,13 +18,25 @@ const int cube_width = 50; // how big the cube will look
 float z_buf[W * H];     // stores z values of points (for depth perception effects)
 char buf[W * H];        // stores characters to print
 int bg = ' ';           // background
+float spacing = 0.5;
 
 float x, y, z;  // coordinates for each vertex
 float xp, yp;   // projected x and y coordinates 
+float rnx, rny, rnz;
+float luminance;
 float camera_dist = 90; // self-explanatory.
 float z1 = 40;  // essentially z', used in projection formula
 float ooz;      // one over z
 int idx;        // cell index   
+
+char shades[] = ".,-~:;=!*#$@";
+int shadelen = sizeof(shades)/sizeof(char);
+
+typedef struct {
+    float x, y, z;
+} point;
+
+point lightsource = {100, 100, -100};
 
 /* 
     === euler rotation coordinates ===
@@ -51,12 +63,22 @@ float calcZ(float i, float j, float k) {
   return k * cos(A) * cos(B) - j * sin(A) * cos(B) + i * sin(B);
 }
 
+float mag(point vec) {
+    return sqrt(vec.x*vec.x + vec.y*vec.y + vec.z*vec.z);
+}
+
 // takes the rotated coordinates and applies z buffering + loads in the character
 
-void calculatepoint(float i, float j, float k, int ch) {
+void calculatepoint(float i, float j, float k, float nx, float ny, float nz) {
     x = calcX(i, j, k);
     y = calcY(i, j, k);
     z = calcZ(i, j, k) + camera_dist;
+
+    rnx = calcX(nx, ny, nz);
+    rny = calcY(nx, ny, nz);
+    rnz = calcZ(nx, ny, nz);
+
+    luminance = (rnx*lightsource.x + rny*lightsource.y + rnz*lightsource.z)/mag(lightsource);
 
     ooz = 1/z;
 
@@ -70,7 +92,12 @@ void calculatepoint(float i, float j, float k, int ch) {
     if (idx >= 0 && idx < W * H) {
         if (ooz > z_buf[idx]) {
             z_buf[idx] = ooz;
-            buf[idx] = ch;
+            
+            int shade_idx = (int)((luminance)*(shadelen - 1));
+            if (shade_idx < 0) shade_idx = 0;
+            if (shade_idx > shadelen - 1) shade_idx = shadelen - 1;
+
+            buf[idx] = shades[shade_idx];
         }
     }
 
@@ -88,14 +115,14 @@ int main() {
         memset(z_buf, 0, W * H * sizeof(float));
 
         // loading chars into buf[] for each frame
-        for (float i = -cube_width/2; i < cube_width/2; i += 2) {
-            for (float j = -cube_width/2; j < cube_width/2; j += 4) {
-                calculatepoint(i, j, cube_width/2, '*');
-                calculatepoint(-cube_width/2, j, i, '%');
-                calculatepoint(-i, j, -cube_width/2, '#');
-                calculatepoint(cube_width/2, j, -i, '%');
-                calculatepoint(i, cube_width/2, -j, '@');
-                calculatepoint(i, -cube_width/2, j,  '&');
+        for (float i = -cube_width/2; i <= cube_width/2; i += spacing) {
+            for (float j = -cube_width/2; j <= cube_width/2; j += spacing) {
+                calculatepoint(i, j, cube_width/2, 0, 0, 1);    // front    (+z)
+                calculatepoint(-cube_width/2, j, i, 0, 0, -1);  // back     (-z)
+                calculatepoint(-i, j, -cube_width/2, 1, 0, 0);  // right    (+x)
+                calculatepoint(cube_width/2, j, -i, -1, 0, 0);  // left     (-x)
+                calculatepoint(i, cube_width/2, -j, 0, 1, 0);   // top      (+y)
+                calculatepoint(i, -cube_width/2, j,  0, -1, 0); // bottom   (-y)
             }
         }
 
@@ -122,6 +149,3 @@ int main() {
     }
     return 0;
 }
-
-
-
