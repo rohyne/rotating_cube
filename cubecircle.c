@@ -11,6 +11,10 @@
 #define W 150
 #define H 55
 
+#define NORMAL 0
+#define SHINY 1
+#define HOLE 2
+
 // angles (A -> x-axis | B -> y-axis | C -> z-axis)
 float A = 0, B = 0, C = 0;
 
@@ -24,12 +28,15 @@ float x, y, z;  // coordinates for each vertex
 float xp, yp;   // projected x and y coordinates 
 float rnx, rny, rnz;
 float luminance;
+const float diameter = cube_width * 0.75; 
+const float radius = diameter/2;
 float camera_dist = 90; // self-explanatory.
 float z1 = 40;  // essentially z', used in projection formula
 float ooz;      // one over z
 int idx;        // cell index   
 
 char shades[] = ".,-~:;=!*#$@";
+char shines[] = "@$#*!=;:~`,.";
 int shadelen = sizeof(shades)/sizeof(char);
 
 typedef struct {
@@ -69,7 +76,7 @@ float mag(point vec) {
 
 // takes the rotated coordinates and applies z buffering + loads in the character
 
-void calculatepoint(float i, float j, float k, float nx, float ny, float nz) {
+void calculatepoint(float i, float j, float k, float nx, float ny, float nz, int type) {
     x = calcX(i, j, k);
     y = calcY(i, j, k);
     z = calcZ(i, j, k) + camera_dist;
@@ -89,8 +96,8 @@ void calculatepoint(float i, float j, float k, float nx, float ny, float nz) {
 
     idx = xp + yp * W;  // index calculation. 
 
-    if (idx >= 0 && idx < W * H) {
-        if (ooz > z_buf[idx]) {
+    if ((idx >= 0 && idx < W * H) && (ooz > z_buf[idx])) {
+        if (type == NORMAL) {
             z_buf[idx] = ooz;
             
             int shade_idx = (int)((luminance)*(shadelen - 1));
@@ -99,9 +106,21 @@ void calculatepoint(float i, float j, float k, float nx, float ny, float nz) {
 
             buf[idx] = shades[shade_idx];
         }
-    }
+        if (type == SHINY) {
+            z_buf[idx] = ooz;
+            
+            int shine_idx = (int)((luminance)*(shadelen - 1));
+            if (shine_idx < 0) shine_idx = 0;
+            if (shine_idx > shadelen - 1) shine_idx = shadelen - 1;
 
+            buf[idx] = shines[shine_idx];
+        }
+        if (type == HOLE) {
+            buf[idx] = bg;
+        }
+    }
 }
+
 
 int main() {
 
@@ -115,16 +134,32 @@ int main() {
         memset(z_buf, 0, W * H * sizeof(float));
 
         // loading chars into buf[] for each frame
+        
         for (float i = -cube_width/2; i <= cube_width/2; i += spacing) {
             for (float j = -cube_width/2; j <= cube_width/2; j += spacing) {
-                calculatepoint(i, j, cube_width/2, 0, 0, 1);    // front    (+z)
-                calculatepoint(-cube_width/2, j, i, 0, 0, -1);  // back     (-z)
-                calculatepoint(-i, j, -cube_width/2, 1, 0, 0);  // right    (+x)
-                calculatepoint(cube_width/2, j, -i, -1, 0, 0);  // left     (-x)
-                calculatepoint(i, cube_width/2, -j, 0, 1, 0);   // top      (+y)
-                calculatepoint(i, -cube_width/2, j,  0, -1, 0); // bottom   (-y)
+                calculatepoint(-i, j, -cube_width/2, 1, 0, 0, NORMAL);  // front    (+z)
+                calculatepoint(i, j, cube_width/2, 0, 0, 1, NORMAL);    // back     (-z)
+                calculatepoint(cube_width/2, j, -i, -1, 0, 0, NORMAL);  // right    (+x)
+                calculatepoint(-cube_width/2, j, i, 0, 0, -1, NORMAL);  // left     (-x)
+                calculatepoint(i, -cube_width/2, j,  0, -1, 0, NORMAL); // top      (+y)
+                calculatepoint(i, cube_width/2, -j, 0, 1, 0, NORMAL);   // bottom   (-y)
             }
         }
+
+        
+        for (float i = -radius; i <= radius; i += spacing) {
+            for (float j = -radius; j <= radius; j += spacing) {
+                if (i*i + j*j <= radius*radius) { 
+                    calculatepoint(-i, j, -(cube_width/2 + 0.1), 1, 0, 0, SHINY);
+                    calculatepoint(i, j, (cube_width/2 + 0.1), 0, 0, 1, SHINY);
+                    calculatepoint((cube_width/2 + 0.1), j, -i, -1, 0, 0, SHINY);
+                    calculatepoint(-(cube_width/2 + 0.1), j, i, 0, 0, -1, SHINY);
+                    calculatepoint(i, -(cube_width/2 + 0.1), j, 0, -1, 0, SHINY);
+                    calculatepoint(i, (cube_width/2 + 0.1), -j, 0, 1, 0, SHINY);
+                }
+            }
+        }
+
 
         printf("\x1b[H"); // ANSI code to tell the cursor to return to the start position
 
