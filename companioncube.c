@@ -21,13 +21,14 @@ float A = 0, B = 0, C = 0;
 const int cube_width = 50; // how big the cube will look
 float z_buf[W * H];     // stores z values of points (for depth perception effects)
 char buf[W * H];        // stores characters to print
+char render_buf[(W + 1) * H + 1]; // this string will be printed (1 is added for '\n's and '\0')
 int bg = ' ';           // background
-float spacing = 0.1;
+float spacing = 0.5;
 
 float x, y, z;  // coordinates for each vertex
 float xp, yp;   // projected x and y coordinates 
-float rnx, rny, rnz;
-float luminance;
+float rnx, rny, rnz; // rotated normal coordinates
+float luminance; 
 const float diameter = cube_width * 0.75; 
 const float radius = diameter/2;
 const float heartsize = cube_width * 0.25;
@@ -36,8 +37,8 @@ float z1 = 40;  // essentially z', used in projection formula
 float ooz;      // one over z
 int idx;        // cell index   
 
-char shades[] = ".,-~:;=!*#$@";
-char shines[] = "@$#*!=;:~`,.";
+char shades[] = ".,-~:;=!*#$@"; // shades (darkest to brightest)
+char shines[] = "@$#*!=;:~`,."; 
 int shadelen = sizeof(shades)/sizeof(char);
 
 typedef struct {
@@ -71,22 +72,21 @@ float calcZ(float i, float j, float k) {
   return k * cos(A) * cos(B) - j * sin(A) * cos(B) + i * sin(B);
 }
 
-float mag(point vec) {
-    return sqrt(vec.x*vec.x + vec.y*vec.y + vec.z*vec.z);
-}
-
-// takes the rotated coordinates and applies z buffering + loads in the character
+// takes the rotated coordinates and applies shading + loads chars into buf[]
 
 void calculatepoint(float i, float j, float k, float nx, float ny, float nz, int type) {
     x = calcX(i, j, k);
     y = calcY(i, j, k);
     z = calcZ(i, j, k) + camera_dist;
 
-    rnx = calcX(nx, ny, nz);
+    // calculating rotated normal coordinates
+    rnx = calcX(nx, ny, nz); 
     rny = calcY(nx, ny, nz);
     rnz = calcZ(nx, ny, nz);
 
-    luminance = (rnx*lightsource.x + rny*lightsource.y + rnz*lightsource.z)/mag(lightsource);
+    // value for how much light is hitting the surface (between 0 and 1)
+    float mag = sqrt(lightsource.x*lightsource.x + lightsource.y*lightsource.y + lightsource.z*lightsource.z);
+    luminance = (rnx*lightsource.x + rny*lightsource.y + rnz*lightsource.z)/mag;
 
     ooz = 1/z;
 
@@ -101,9 +101,9 @@ void calculatepoint(float i, float j, float k, float nx, float ny, float nz, int
         if (type == NORMAL) {
             z_buf[idx] = ooz;
             
-            int shade_idx = (int)((luminance)*(shadelen - 1));
-            if (shade_idx < 0) shade_idx = 0;
-            if (shade_idx > shadelen - 1) shade_idx = shadelen - 1;
+            int shade_idx = (int)((luminance)*(shadelen - 1)); // assigning a value between 0 and (shadelen - 1) to get a shade
+            if (shade_idx < 0) shade_idx = 0; // darkest case
+            if (shade_idx > shadelen - 1) shade_idx = shadelen - 1; // brightest case
 
             buf[idx] = shades[shade_idx];
         }
@@ -135,7 +135,8 @@ int main() {
         memset(z_buf, 0, W * H * sizeof(float));
 
         // loading chars into buf[] for each frame
-        
+    
+        // sides of the cube
         for (float i = -cube_width/2; i <= cube_width/2; i += spacing) {
             for (float j = -cube_width/2; j <= cube_width/2; j += spacing) {
                 calculatepoint(-i, j, -cube_width/2, 1, 0, 0, NORMAL);  // front    (+z)
@@ -147,7 +148,7 @@ int main() {
             }
         }
 
-        
+        // circle on each face
         for (float i = -radius; i <= radius; i += spacing) {
             for (float j = -radius; j <= radius; j += spacing) {
                 if (i*i + j*j <= radius*radius) { 
@@ -160,46 +161,51 @@ int main() {
                 }
             }
         }
-
+        
+        // heart in each circle
         for (float i = -heartsize; i <= heartsize; i += spacing) {
-    for (float j = -heartsize; j <= heartsize; j += spacing) { 
-        float s = 2.0 / heartsize; 
-        float x_h = i * s;
-        float y_h = j * s;
+            for (float j = -heartsize; j <= heartsize; j += spacing) { 
+                float s = 2.0 / heartsize; 
+                float x_h = i * s;
+                float y_h = j * s;
 
-        float term = (x_h * x_h + y_h * y_h - 1);
-        if (term * term * term - x_h * x_h * y_h * y_h * y_h <= 0) {
-            calculatepoint(-i, -j, -(cube_width/2 + 0.1), 1, 0, 0, SHINY);
-            calculatepoint(i, -j, (cube_width/2 + 0.1), 0, 0, 1, SHINY);
-            calculatepoint((cube_width/2 + 0.1), -j, -i, -1, 0, 0, SHINY);
-            calculatepoint(-(cube_width/2 + 0.1), -j, i, 0, 0, -1, SHINY);
-            calculatepoint(i, -(cube_width/2 + 0.1), j, 0, -1, 0, SHINY);
-            calculatepoint(i, (cube_width/2 + 0.1), -j, 0, 1, 0, SHINY);
+                float term = (x_h * x_h + y_h * y_h - 1);
+                if (term * term * term - x_h * x_h * y_h * y_h * y_h <= 0) {
+                    calculatepoint(-i, -j, -(cube_width/2 + 0.1), 1, 0, 0, SHINY);
+                    calculatepoint(i, -j, (cube_width/2 + 0.1), 0, 0, 1, SHINY);
+                    calculatepoint((cube_width/2 + 0.1), -j, -i, -1, 0, 0, SHINY);
+                    calculatepoint(-(cube_width/2 + 0.1), -j, i, 0, 0, -1, SHINY);
+                    calculatepoint(i, -(cube_width/2 + 0.1), j, 0, -1, 0, SHINY);
+                    calculatepoint(i, (cube_width/2 + 0.1), -j, 0, 1, 0, SHINY);
+                }
+            }
         }
-    }
-}
 
+        // putting contents of buf[] into render_buf[]
+
+        int k = 0;
+        for (int j = 0; j < H; j++) {
+            for (int i = 0; i < W; i++) {
+                render_buf[k++] = buf[i + j*W];
+            }
+            render_buf[k++] = '\n';
+        }
+        render_buf[k] == '\0';
 
         printf("\x1b[H"); // ANSI code to tell the cursor to return to the start position
 
-        // printing contents of buf[]
-        for (int i = 0; i < W * H; i++) {
-            if (i % W == 0) {
-                putchar('\n');
-            }
-            else {
-                putchar(buf[i]);
-            }
-        }
-
+        // printing each frame at once (much more faster than simply iterating over buf[] and printing each char sequentially)
+        fwrite(render_buf, 1, k, stdout);
 
         // changing angles so that the cube rotates
         A += 0.1;
         B += 0.1;
-        C += 0.1;
+        C += 0.01;
 
-        //usleep(8000); // <--- uncomment this to slow down the animation
+        //usleep(1000/60); // <--- uncomment this to make the animation have a constant framerate (non-windows)
         
+        //Sleep(1000/60); // <--- uncomment this to make the animation have a constant framerate (windows)
+
     }
     return 0;
 }
