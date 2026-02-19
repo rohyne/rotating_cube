@@ -3,6 +3,7 @@
 #include <math.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -15,6 +16,10 @@
 #define SHINY 1
 #define HOLE 2
 
+#define XCONST 0
+#define YCONST 1
+#define ZCONST 2
+
 // angles (A -> x-axis | B -> y-axis | C -> z-axis)
 float A = 0, B = 0, C = 0;
 
@@ -25,17 +30,12 @@ char render_buf[(W + 1) * H + 1]; // this string will be printed (1 is added for
 int bg = ' ';           // background
 float spacing = 0.5;
 
-float x, y, z;  // coordinates for each vertex
-float xp, yp;   // projected x and y coordinates 
-float rnx, rny, rnz; // rotated normal coordinates
-float luminance; 
 const float diameter = cube_width * 0.75; 
 const float radius = diameter/2;
 const float heartsize = cube_width * 0.25;
 float camera_dist = 90; // self-explanatory.
 float z1 = 40;  // essentially z', used in projection formula
 float ooz;      // one over z
-int idx;        // cell index   
 
 char shades[] = ".,-~:;=!*#$@"; // shades (darkest to brightest)
 char shines[] = "@$#*!=;:~`,."; 
@@ -74,28 +74,28 @@ float calcZ(float i, float j, float k) {
 
 // takes the rotated coordinates and applies shading + loads chars into buf[]
 
-void calculatepoint(float i, float j, float k, float nx, float ny, float nz, int type) {
-    x = calcX(i, j, k);
-    y = calcY(i, j, k);
-    z = calcZ(i, j, k) + camera_dist;
+void calculate_point(float i, float j, float k, float nx, float ny, float nz, float type) {
+    float x = calcX(i, j, k);
+    float y = calcY(i, j, k);
+    float z = calcZ(i, j, k) + camera_dist;
 
     // calculating rotated normal coordinates
-    rnx = calcX(nx, ny, nz); 
-    rny = calcY(nx, ny, nz);
-    rnz = calcZ(nx, ny, nz);
+    float rnx = calcX(nx, ny, nz); 
+    float rny = calcY(nx, ny, nz);
+    float rnz = calcZ(nx, ny, nz);
 
     // value for how much light is hitting the surface (between 0 and 1)
     float mag = sqrt(lightsource.x*lightsource.x + lightsource.y*lightsource.y + lightsource.z*lightsource.z);
-    luminance = (rnx*lightsource.x + rny*lightsource.y + rnz*lightsource.z)/mag;
+    float luminance = (rnx*lightsource.x + rny*lightsource.y + rnz*lightsource.z)/mag;
 
-    ooz = 1/z;
+    float ooz = 1/z;
 
     // W/2 and H/2 are added so that the cube stays centered
 
-    xp = round(W/2 + z1 * x * ooz * 2); // 2 is multiplied because the height of ASCII characters is usually 2x their width
-    yp = round(H/2 + z1 * y * ooz);
+    float xp = round(W/2 + z1 * x * ooz * 2); // 2 is multiplied because the height of ASCII characters is usually 2x their width
+    float yp = round(H/2 + z1 * y * ooz);
 
-    idx = xp + yp * W;  // index calculation. 
+    int idx = xp + yp * W;  // index calculation. 
 
     if ((idx >= 0 && idx < W * H) && (ooz > z_buf[idx])) {
         if (type == NORMAL) {
@@ -122,64 +122,93 @@ void calculatepoint(float i, float j, float k, float nx, float ny, float nz, int
     }
 }
 
+void* render_faces(void* args) {
+	float* p = (float*)args;
+	
+	/* 
+	p = {start_index, end_index, shading_type, <--- common for both sides
+		 fixed_value1, normal_x1, normal_y1, mode1, <--- first face args	
+		 fixed_value2, normal_x2, normal_y2, mode2} <--- second face args
+	*/
+	
+	float start_i = p[0];
+    float end_i = p[1];
+    float type = p[2];
+
+    float fixed_1 = p[3];
+    float nx1 = p[4], ny1 = p[5], nz1 = p[6];
+    int mode1 = (int)p[7];
+	
+    float fixed_2 = p[8];
+    float nx2 = p[9], ny2 = p[10], nz2 = p[11];
+    int mode2 = (int)p[12];
+	
+	for (float i = start_i; i <= end_i; i += spacing) {
+        for (float j = -cube_width/2; j <= cube_width/2; j += spacing) {
+            
+            if (mode1 == XCONST) {
+            	calculate_point(fixed_1, j, i, nx1, ny1, nz1, type);
+            }
+            else if (mode1 == YCONST) {
+            	calculate_point(i, fixed_1, j, nx1, ny1, nz1, type);
+            }
+            else if (mode1 == ZCONST) {
+            	calculate_point(i, j, fixed_1, nx1, ny1, nz1, type);
+			}
+			
+            if (mode2 == XCONST) {
+            	calculate_point(fixed_2, j, i, nx2, ny2, nz2, type);
+            }
+            else if (mode2 == YCONST) {
+            	calculate_point(i, fixed_2, j, nx2, ny2, nz2, type);
+            }
+            else if (mode2 == ZCONST) {
+            	calculate_point(i, j, fixed_2, nx2, ny2, nz2, type);
+        	}
+        }
+    }
+	
+	return NULL;
+}
 
 int main() {
-
-
+	
+	float front_back_args[] = {
+		-cube_width/2, cube_width/2, NORMAL, 
+		-cube_width/2, 1, 0, 0, ZCONST,   
+		 cube_width/2, 0, 0, 1, ZCONST    
+	};
+	
+	float left_right_args[] = {
+		-cube_width/2, cube_width/2, NORMAL, 
+		 cube_width/2, -1, 0, 0, XCONST,
+		-cube_width/2,  0, 0, -1, XCONST
+	};
+	
+	float top_bottom_args[] = {
+		-cube_width/2, cube_width/2, NORMAL, 
+		-cube_width/2, 0, -1, 0, YCONST,
+		 cube_width/2, 0, 1, 0, YCONST
+	};
+	
     printf("\x1b[2J"); // ANSI code to clear terminal
-
+	
+	
     while (1) {
 
         // clearing both buf and z_buf
         memset(buf, bg, W * H * sizeof(char)); 
         memset(z_buf, 0, W * H * sizeof(float));
 
-        // loading chars into buf[] for each frame
-    
-        // sides of the cube
-        for (float i = -cube_width/2; i <= cube_width/2; i += spacing) {
-            for (float j = -cube_width/2; j <= cube_width/2; j += spacing) {
-                calculatepoint(-i, j, -cube_width/2, 1, 0, 0, NORMAL);  // front    (+z)
-                calculatepoint(i, j, cube_width/2, 0, 0, 1, NORMAL);    // back     (-z)
-                calculatepoint(cube_width/2, j, -i, -1, 0, 0, NORMAL);  // right    (+x)
-                calculatepoint(-cube_width/2, j, i, 0, 0, -1, NORMAL);  // left     (-x)
-                calculatepoint(i, -cube_width/2, j,  0, -1, 0, NORMAL); // top      (+y)
-                calculatepoint(i, cube_width/2, -j, 0, 1, 0, NORMAL);   // bottom   (-y)
-            }
-        }
-
-        // circle on each face
-        for (float i = -radius; i <= radius; i += spacing) {
-            for (float j = -radius; j <= radius; j += spacing) {
-                if (i*i + j*j <= radius*radius) { 
-                    calculatepoint(-i, j, -(cube_width/2 + 0.1), 1, 0, 0, HOLE);
-                    calculatepoint(i, j, (cube_width/2 + 0.1), 0, 0, 1, HOLE);
-                    calculatepoint((cube_width/2 + 0.1), j, -i, -1, 0, 0, HOLE);
-                    calculatepoint(-(cube_width/2 + 0.1), j, i, 0, 0, -1, HOLE);
-                    calculatepoint(i, -(cube_width/2 + 0.1), j, 0, -1, 0, HOLE);
-                    calculatepoint(i, (cube_width/2 + 0.1), -j, 0, 1, 0, HOLE);
-                }
-            }
-        }
-        
-        // heart in each circle
-        for (float i = -heartsize; i <= heartsize; i += spacing) {
-            for (float j = -heartsize; j <= heartsize; j += spacing) { 
-                float s = 2.0 / heartsize; 
-                float x_h = i * s;
-                float y_h = j * s;
-
-                float term = (x_h * x_h + y_h * y_h - 1);
-                if (term * term * term - x_h * x_h * y_h * y_h * y_h <= 0) {
-                    calculatepoint(-i, -j, -(cube_width/2 + 0.1), 1, 0, 0, SHINY);
-                    calculatepoint(i, -j, (cube_width/2 + 0.1), 0, 0, 1, SHINY);
-                    calculatepoint((cube_width/2 + 0.1), -j, -i, -1, 0, 0, SHINY);
-                    calculatepoint(-(cube_width/2 + 0.1), -j, i, 0, 0, -1, SHINY);
-                    calculatepoint(i, -(cube_width/2 + 0.1), j, 0, -1, 0, SHINY);
-                    calculatepoint(i, (cube_width/2 + 0.1), -j, 0, 1, 0, SHINY);
-                }
-            }
-        }
+		pthread_t threads[3];
+		
+		pthread_create(&threads[0], NULL, render_faces, front_back_args);
+		pthread_create(&threads[1], NULL, render_faces, left_right_args);
+		pthread_create(&threads[2], NULL, render_faces, top_bottom_args);
+		
+		for (int i = 0; i < 3; i++) {
+			pthread_join(threads[i], NULL);
+		}
 
         // putting contents of buf[] into render_buf[]
 
@@ -190,7 +219,7 @@ int main() {
             }
             render_buf[k++] = '\n';
         }
-        render_buf[k] == '\0';
+        render_buf[k] = '\0';
 
         printf("\x1b[H"); // ANSI code to tell the cursor to return to the start position
 
@@ -202,7 +231,7 @@ int main() {
         B += 0.1;
         C += 0.01;
 
-        usleep(1000/60); // <--- uncomment this to make the animation have a constant framerate (non-windows)
+        usleep(8000 * 2); // <--- uncomment this to make the animation have a constant framerate (non-windows)
         
         //Sleep(1000/60); // <--- uncomment this to make the animation have a constant framerate (windows)
 
